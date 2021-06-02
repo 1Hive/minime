@@ -62,6 +62,27 @@ contract MiniMeToken is Controlled {
     string public symbol;              //An identifier: e.g. REP
     string public version = "MMT_0.1"; //An arbitrary versioning scheme
 
+    bytes32 public nameHash;           //Name Hash to generate the domain separator  
+
+    mapping(address => uint256) public nonces;                              // Track the nonces used by the permit function
+    mapping(address => mapping(bytes32 => bool)) public authorizationState; // Help to track the states of transferWithAutorization
+
+    // The chainId is hardcoded since solidity ^0.4.24 does not support `chainid` so we cannot get it dinamically
+    // xDAI = 0x64 (100)
+    uint256 public constant CHAINID = 0x64;
+    // bytes32 public view PERMIT_TYPEHASH = 
+    //      keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
+    bytes32 public constant PERMIT_TYPEHASH = 0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
+    // bytes32 public view TRANSFER_WITH_AUTHORIZATION_TYPEHASH =
+    //      keccak256("TransferWithAuthorization(address from,address to,uint256 value,uint256 validAfter,uint256 validBefore,bytes32 nonce)");
+    bytes32 public constant TRANSFER_WITH_AUTHORIZATION_TYPEHASH = 0x7c7c6cdb67a18743f49ec6fa9b35f50d52ed05cbed4cc592e13b44501c1a2267;
+    // bytes32 public view EIP712DOMAIN_HASH =
+    //      keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)")
+    bytes32 public constant EIP712DOMAIN_HASH = 0x8b73c3c69bb8fe3d512ecc4cf759cc79239f7b179b0ffacaa9a75d522b39400f;
+    // bytes32 public view VERSION_HASH =
+    //      keccak256("1")
+    bytes32 public constant VERSION_HASH = 0xc89efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bc6;
+
 
     /// @dev `Checkpoint` is the structure that attaches a block number to a
     ///  given value, the block number attached is the one that last changed the
@@ -138,6 +159,7 @@ contract MiniMeToken is Controlled {
         parentSnapShotBlock = _parentSnapShotBlock;
         transfersEnabled = _transfersEnabled;
         creationBlock = block.number;
+        nameHash = keccak256(_tokenName);
     }
 
 
@@ -221,29 +243,38 @@ contract MiniMeToken is Controlled {
     }
 
     /// @notice `msg.sender` approves `_spender` to spend `_amount` tokens on
-    ///  its behalf. This is a modified version of the ERC20 approve function
-    ///  to be a little bit safer
+    ///  its behalf.
     /// @param _spender The address of the account able to transfer the tokens
     /// @param _amount The amount of tokens to be approved for transfer
     /// @return True if the approval was successful
     function approve(address _spender, uint256 _amount) public returns (bool success) {
+        _approve(msg.sender, _spender, _amount);
+        return true;
+    }
+
+    /// @notice private function where `_owner` approves `_spender` to spend `_amount` tokens on
+    ///  its behalf. This is a modified version of the ERC20 approve function
+    ///  to be a little bit safer
+    /// @param _owner The address of the owner of the tokens to be approved
+    /// @param _spender The address of the account able to transfer the tokens
+    /// @param _amount The amount of tokens to be approved for transfer
+    /// @return True if the approval was successful
+    function _approve(address _owner, address _spender, uint256 _amount) private {
         require(transfersEnabled);
 
         // To change the approve amount you first have to reduce the addresses`
         //  allowance to zero by calling `approve(_spender,0)` if it is not
         //  already 0 to mitigate the race condition described here:
         //  https://github.com/ethereum/EIPs/issues/20#issuecomment-263524729
-        require((_amount == 0) || (allowed[msg.sender][_spender] == 0));
+        require((_amount == 0) || (allowed[_owner][_spender] == 0));
 
         // Alerts the token controller of the approve function call
         if (isContract(controller)) {
             // Adding the ` == true` makes the linter shut up so...
-            require(ITokenController(controller).onApprove(msg.sender, _spender, _amount) == true);
+            require(ITokenController(controller).onApprove(_owner, _spender, _amount) == true);
         }
-
-        allowed[msg.sender][_spender] = _amount;
-        Approval(msg.sender, _spender, _amount);
-        return true;
+        allowed[_owner][_spender] = _amount;
+        Approval(_owner, _spender, _amount);
     }
 
     /// @dev This function makes it easy to read the `allowed[]` map
@@ -279,6 +310,98 @@ contract MiniMeToken is Controlled {
     /// @return The total number of tokens
     function totalSupply() public constant returns (uint) {
         return totalSupplyAt(block.number);
+    }
+
+////////////////
+// Permit and transferWithAuthorization
+////////////////
+    function permit(
+        address _owner,
+        address _spender,
+        uint256 _value,
+        uint256 _deadline,
+        uint8 _v,
+        bytes32 _r,
+        bytes32 _s
+    ) public {
+        require(_deadline >= block.timestamp, "permit: AUTH_EXPIRED");
+
+        bytes32 encodeData = keccak256(
+            abi.encode(
+                PERMIT_TYPEHASH,
+                _owner,
+                _spender,
+                _value,
+                nonces[_owner]++,
+                _deadline
+            )
+        );
+        _validateSignedData(_owner, encodeData, _v, _r, _s);
+        _approve(_owner, _spender, _value);
+    }
+
+    function getDomainSeparator() public constant returns (bytes32) {
+        return keccak256(
+            abi.encode(
+                EIP712DOMAIN_HASH,
+                nameHash,
+                VERSION_HASH,
+                CHAINID,
+                address(this)
+            )
+        );
+    }
+
+    function _validateSignedData(
+        address _signer,
+        bytes32 _encodeData,
+        uint8 _v,
+        bytes32 _r,
+        bytes32 _s
+    ) internal constant {
+
+        bytes32 digest = keccak256(
+            abi.encodePacked("\x19\x01", getDomainSeparator(), _encodeData)
+        );
+        address recoveredAddress = ecrecover(digest, _v, _r, _s);
+        // Explicitly disallow authorizations for address(0) as ecrecover returns address(0) on malformed messages
+        require(
+            recoveredAddress != 0 && recoveredAddress == _signer,
+            "_validateSignedData: INVALID_SIGNATURE"
+        );
+    }
+
+    function transferWithAuthorization(
+        address _from,
+        address _to,
+        uint256 _value,
+        uint256 _validAfter,
+        uint256 _validBefore,
+        bytes32 _nonce,
+        uint8 _v,
+        bytes32 _r,
+        bytes32 _s
+    ) external {
+        require(block.timestamp > _validAfter, "transferWithAuthorization: AUTH_NOT_YET_VALID");
+        require(block.timestamp < _validBefore, "transferWithAuthorization: AUTH_EXPIRED");
+        require(!authorizationState[_from][_nonce], "transferWithAuthorization: AUTH_ALREADY_USED");
+
+        bytes32 encodeData = keccak256(
+            abi.encode(
+                TRANSFER_WITH_AUTHORIZATION_TYPEHASH,
+                _from,
+                _to,
+                _value,
+                _validAfter,
+                _validBefore,
+                _nonce
+            )
+        );
+        _validateSignedData(_from, encodeData, _v, _r, _s);
+
+        authorizationState[_from][_nonce] = true;
+        require(doTransfer(_from, _to, _value));
+        AuthorizationUsed(_from, _nonce);
     }
 
 
@@ -529,6 +652,7 @@ contract MiniMeToken is Controlled {
         address indexed _spender,
         uint256 _amount
         );
+    event AuthorizationUsed(address indexed authorizer, bytes32 indexed nonce);
 
 }
 
