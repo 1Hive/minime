@@ -67,7 +67,7 @@ contract MiniMeToken is Controlled {
     mapping(address => uint256) public nonces;                              // Track the nonces used by the permit function
     mapping(address => mapping(bytes32 => bool)) public authorizationState; // Help to track the states of transferWithAutorization
 
-    // The chainId is hardcoded since solidity ^0.4.24 does not support `chainid` so we cannot get it dinamically
+    // The chainId is hardcoded since solidity ^0.4.24 does not support `chainid` so we cannot get it dynamically
     // xDAI = 0x64 (100)
     uint256 public constant CHAINID = 0x64;
     // bytes32 public view PERMIT_TYPEHASH = 
