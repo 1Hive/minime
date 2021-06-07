@@ -400,6 +400,7 @@ contract MiniMeToken is Controlled {
         _validateSignedData(_from, encodeData, _v, _r, _s);
 
         authorizationState[_from][_nonce] = true;
+        require(transfersEnabled);
         require(doTransfer(_from, _to, _value));
         AuthorizationUsed(_from, _nonce);
     }
