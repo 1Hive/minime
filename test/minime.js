@@ -2,6 +2,15 @@ const getBlockNumber = require('@aragon/test-helpers/blockNumber')(web3)
 const { assertRevert } = require('@aragon/test-helpers/assertThrow')
 const MiniMeToken = artifacts.require('MiniMeToken')
 const MiniMeTokenFactory = artifacts.require('MiniMeTokenFactory')
+const { createPermitDigest, PERMIT_TYPEHASH } = require('./helpers/erc2612')
+const { tokenAmount } = require('./helpers/tokens')
+const web3Accounts = require('web3-eth-accounts');
+const { ecsign, ecrecover } = require('ethereumjs-util')
+const utils = require('web3-utils');
+const { assertBn, assertEvent } = require('@aragon/contract-helpers-test/src/asserts')
+const { createTransferWithAuthorizationDigest, TRANSFER_WITH_AUTHORIZATION_TYPEHASH } = require('./helpers/erc3009')
+const { keccak256 } = require('web3-utils')
+const { bn, MAX_UINT256, ZERO_ADDRESS } = require('@aragon/contract-helpers-test')
 
 contract('MiniMeToken', accounts => {
     let factory = {}
@@ -97,7 +106,7 @@ contract('MiniMeToken', accounts => {
         it('approve tokens for spending', async () => {
             assert.ok(await token.approve(accounts[3], 10))
             assert.equal(await token.allowance(accounts[0], accounts[3]), 10, 'account 3 should have an allowance')
-            await token.transferFrom(accounts[0], accounts[4], 5, {from: accounts[3]})
+            await token.transferFrom(accounts[0], accounts[4], 5, { from: accounts[3] })
 
             const newAllowance = await token.allowance(accounts[0], accounts[3])
             assert.equal(newAllowance, 5, 'should have an allowance of 5')
@@ -154,6 +163,293 @@ contract('MiniMeToken', accounts => {
             assert.equal(await clone1.balanceOfAt(accounts[4], block - 1), 1000, 'should have 1000 in the past block')
             assert.equal(await clone1.balanceOf(accounts[5]), 100, 'transferee should have balance of 100')
             assert.equal(await clone1.balanceOfAt(accounts[5], block - 1), 0, 'transferee should have previous balance of 0')
+        })
+    })
+
+    context('ERC-2612', () => {
+
+        let _owner, ownerPrivKey
+        const _spender = accounts[3]
+        let wallet;
+
+        async function createPermitSignature(_owner, _spender, value, nonce, deadline) {
+            const digest = await createPermitDigest(token, _owner, _spender, value, nonce, deadline)
+
+            const { r, s, v } = ecsign(
+                Buffer.from(digest.slice(2), 'hex'),
+                Buffer.from(ownerPrivKey.slice(2), 'hex')
+            )
+
+            return { r, s, v }
+        }
+
+        before(async () => {
+            var accountsWeb3 = new web3Accounts('http://localhost:8545');
+            wallet = accountsWeb3.create('erc2612')
+            _owner = wallet.address
+            ownerPrivKey = wallet.privateKey
+        })
+
+        beforeEach(async () => {
+            await token.transferFrom(accounts[1], _owner, 10)
+            await token.enableTransfers(true)
+        })
+
+        it('has the correct permit typehash', async () => {
+            assert.equal(await token.PERMIT_TYPEHASH(), PERMIT_TYPEHASH, 'erc2612: typehash')
+        })
+
+        it('can set allowance through permit', async () => {
+            const deadline = MAX_UINT256
+
+            const firstValue = tokenAmount(3)
+            const firstNonce = await token.nonces(_owner)
+            const firstSig = await createPermitSignature(_owner, _spender, firstValue, firstNonce, deadline)
+
+            const firstReceipt = await token.permit(_owner, _spender, utils.toHex(firstValue), utils.toHex(deadline), utils.toHex(firstSig.v), utils.toHex(firstSig.r), utils.toHex(firstSig.s))
+
+            assertBn(await token.allowance(_owner, _spender), firstValue, 'erc2612: first permit allowance')
+            assertBn(await token.nonces(_owner), firstNonce.add(bn(1)), 'erc2612: first permit nonce')
+            assertEvent(firstReceipt, 'Approval', { expectedArgs: { _owner, _spender, _amount: firstValue } })
+
+            const secondValue = tokenAmount(0)
+            const secondNonce = await token.nonces(_owner)
+            const secondSig = await createPermitSignature(_owner, _spender, secondValue, secondNonce, deadline)
+            const secondReceipt = await token.permit(_owner, _spender, utils.toHex(secondValue), utils.toHex(deadline), utils.toHex(secondSig.v), utils.toHex(secondSig.r), utils.toHex(secondSig.s))
+
+            assertBn(await token.allowance(_owner, _spender), secondValue, 'erc2612: second permit allowance')
+            assertBn(await token.nonces(_owner), secondNonce.add(bn(1)), 'erc2612: second permit nonce')
+            assertEvent(secondReceipt, 'Approval', { expectedArgs: { _owner, _spender, _amount: secondValue } })
+
+
+            const thirdValue = tokenAmount(5)
+            const thirdNonce = await token.nonces(_owner)
+            const thirdSig = await createPermitSignature(_owner, _spender, thirdValue, thirdNonce, deadline)
+            const thirdReceipt = await token.permit(_owner, _spender, utils.toHex(thirdValue), utils.toHex(deadline), utils.toHex(thirdSig.v), utils.toHex(thirdSig.r), utils.toHex(thirdSig.s))
+
+            assertBn(await token.allowance(_owner, _spender), thirdValue, 'erc2612: second permit allowance')
+            assertBn(await token.nonces(_owner), thirdNonce.add(bn(1)), 'erc2612: second permit nonce')
+            assertEvent(thirdReceipt, 'Approval', { expectedArgs: { _owner, _spender, _amount: thirdValue } })
+        })
+
+        it('cannot use wrong signature', async () => {
+            const deadline = MAX_UINT256
+            const nonce = await token.nonces(_owner)
+
+            const firstValue = tokenAmount(100)
+            const secondValue = tokenAmount(500)
+            const firstSig = await createPermitSignature(_owner, _spender, firstValue, nonce, deadline)
+            const secondSig = await createPermitSignature(_owner, _spender, secondValue, nonce, deadline)
+
+            // Use a mismatching signature
+            await assertRevert(token.permit(_owner, _spender, utils.toHex(firstValue), utils.toHex(deadline), utils.toHex(secondSig.v), utils.toHex(secondSig.r), utils.toHex(secondSig.s)), '_validateSignedData: INVALID_SIGNATURE')
+        })
+        it('cannot use expired permit', async () => {
+            const value = tokenAmount(100)
+            const nonce = await token.nonces(_owner)
+
+            const deadline = bn(Math.floor(Date.now() / 1000) - 60)
+
+            const { r, s, v } = await createPermitSignature(_owner, _spender, value, nonce, deadline)
+            await assertRevert(token.permit(_owner, _spender, utils.toHex(value), utils.toHex(deadline), utils.toHex(v), utils.toHex(r), utils.toHex(s)), 'permit: AUTH_EXPIRED')
+        })
+
+        it('cannot use surpassed permit', async () => {
+            const deadline = MAX_UINT256
+            const nonce = await token.nonces(_owner)
+
+            // Generate two signatures with the same nonce and use one
+            const firstValue = tokenAmount(100)
+            const secondValue = tokenAmount(0)
+            const firstSig = await createPermitSignature(_owner, _spender, firstValue, nonce, deadline)
+            const zeroSig = await createPermitSignature(_owner, _spender, 0, nonce, deadline)
+            const secondSig = await createPermitSignature(_owner, _spender, secondValue, nonce, deadline)
+
+            // Using one should disallow the other
+            await token.permit(_owner, _spender, utils.toHex(secondValue), utils.toHex(deadline), utils.toHex(secondSig.v), utils.toHex(secondSig.r), utils.toHex(secondSig.s))
+            await assertRevert(token.permit(_owner, _spender, utils.toHex(firstValue), utils.toHex(deadline), utils.toHex(firstSig.v), utils.toHex(firstSig.r), utils.toHex(firstSig.s)), '_validateSignedData: INVALID_SIGNATURE')
+        })
+    })
+    context('ERC-3009', () => {
+
+        let from, fromPrivKey
+        const to = accounts[4]
+
+        async function createTransferWithAuthorizationSignature(from, to, value, validBefore, validAfter, nonce) {
+            const digest = await createTransferWithAuthorizationDigest(token, from, to, value, validBefore, validAfter, nonce)
+
+            const { r, s, v } = ecsign(
+                Buffer.from(digest.slice(2), 'hex'),
+                Buffer.from(fromPrivKey.slice(2), 'hex')
+            )
+
+            return { r, s, v }
+        }
+
+        async function itTransfersCorrectly(fn, { from, to, value }) {
+            const isMint = from === ZERO_ADDRESS
+            const isBurn = to === ZERO_ADDRESS
+
+            const prevFromBal = await token.balanceOf(from)
+            const prevToBal = await token.balanceOf(to)
+            const prevSupply = await token.totalSupply()
+
+            const receipt = await fn(from, to, value)
+
+            if (isMint) {
+                assertBn(await token.balanceOf(to), prevToBal.add(value), 'mint: to balance')
+                assertBn(await token.totalSupply(), prevSupply.add(value), 'mint: total supply')
+            } else if (isBurn) {
+                assertBn(await token.balanceOf(from), prevFromBal.sub(value), 'burn: from balance')
+                assertBn(await token.totalSupply(), prevSupply.sub(value), 'burn: total supply')
+            } else {
+                assertBn(await token.balanceOf(from), prevFromBal.sub(value), 'transfer: from balance')
+                assertBn(await token.balanceOf(to), prevToBal.add(value), 'transfer: to balance')
+                assertBn(await token.totalSupply(), prevSupply, 'transfer: total supply')
+            }
+
+            assertEvent(receipt, 'Transfer', { expectedArgs: { _from: from, _to: to, _amount: bn(value) } })
+        }
+
+        before(async () => {
+            var accountsWeb3 = new web3Accounts('http://localhost:8545');
+            wallet = accountsWeb3.create('erc3009')
+            from = wallet.address
+            fromPrivKey = wallet.privateKey
+        })
+
+        beforeEach(async () => {
+            await token.generateTokens(from, utils.toHex(tokenAmount(100)))
+            await token.enableTransfers(true)
+        })
+
+        it('has the correct transferWithAuthorization typehash', async () => {
+            assert.equal(await token.TRANSFER_WITH_AUTHORIZATION_TYPEHASH(), TRANSFER_WITH_AUTHORIZATION_TYPEHASH, 'erc3009: typehash')
+        })
+
+        it('can transfer through transferWithAuthorization', async () => {
+            const validAfter = 0
+            const validBefore = MAX_UINT256
+
+            const firstNonce = keccak256('first')
+            const secondNonce = keccak256('second')
+            assert.equal(await token.authorizationState(from, firstNonce), false, 'erc3009: first auth unused')
+            assert.equal(await token.authorizationState(from, secondNonce), false, 'erc3009: second auth unused')
+
+            const firstValue = tokenAmount(25)
+            const firstSig = await createTransferWithAuthorizationSignature(from, to, firstValue, validAfter, validBefore, firstNonce)
+            await itTransfersCorrectly(
+                () => token.transferWithAuthorization(from, to, utils.toHex(firstValue), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(firstNonce), utils.toHex(firstSig.v), utils.toHex(firstSig.r), utils.toHex(firstSig.s)),
+                { from, to, value: utils.toHex(firstValue) }
+            )
+            assert.equal(await token.authorizationState(from, firstNonce), true, 'erc3009: first auth')
+
+            const secondValue = tokenAmount(10)
+            const secondSig = await createTransferWithAuthorizationSignature(from, to, secondValue, validAfter, validBefore, secondNonce)
+            await itTransfersCorrectly(
+                () => token.transferWithAuthorization(from, to, utils.toHex(secondValue), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(secondNonce), utils.toHex(secondSig.v), utils.toHex(secondSig.r), utils.toHex(secondSig.s)),
+                { from, to, value: utils.toHex(secondValue) }
+            )
+            assert.equal(await token.authorizationState(from, secondNonce), true, 'erc3009: second auth')
+
+        })
+
+        it('cannot transfer above balance', async () => {
+            const value = (await token.balanceOf(from)).add(bn('1'))
+            const nonce = keccak256('nonce')
+            const validAfter = 0
+            const validBefore = MAX_UINT256
+
+            const { r, s, v } = await createTransferWithAuthorizationSignature(from, to, value, validAfter, validBefore, nonce)
+            await assertRevert(
+                token.transferWithAuthorization(from, to, utils.toHex(value), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(nonce), utils.toHex(v), utils.toHex(r), utils.toHex(s))
+            )
+        })
+
+        it('cannot transfer to token', async () => {
+            const value = tokenAmount(100)
+            const nonce = keccak256('nonce')
+            const validAfter = 0
+            const validBefore = MAX_UINT256
+
+            const { r, s, v } = await createTransferWithAuthorizationSignature(from, token.address, value, validAfter, validBefore, nonce)
+            await assertRevert(
+                token.transferWithAuthorization(from, token.address, utils.toHex(value), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(nonce), utils.toHex(v), utils.toHex(r), utils.toHex(s))
+            )
+        })
+
+        it('cannot transfer to zero address', async () => {
+            const value = tokenAmount(100)
+            const nonce = keccak256('nonce')
+            const validAfter = 0
+            const validBefore = MAX_UINT256
+
+            const { r, s, v } = await createTransferWithAuthorizationSignature(from, ZERO_ADDRESS, value, validAfter, validBefore, nonce)
+            await assertRevert(
+                token.transferWithAuthorization(from, ZERO_ADDRESS, utils.toHex(value), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(nonce), utils.toHex(v), utils.toHex(r), utils.toHex(s))
+            )
+        })
+
+        it('cannot use wrong signature', async () => {
+            const validAfter = 0
+            const validBefore = MAX_UINT256
+
+            const firstNonce = keccak256('first')
+            const firstValue = tokenAmount(25)
+            const firstSig = await createTransferWithAuthorizationSignature(from, to, firstValue, validAfter, validBefore, firstNonce)
+
+            const secondNonce = keccak256('second')
+            const secondValue = tokenAmount(10)
+            const secondSig = await createTransferWithAuthorizationSignature(from, to, secondValue, validAfter, validBefore, secondNonce)
+
+            // Use a mismatching signature
+            await assertRevert(
+                token.transferWithAuthorization(from, to, utils.toHex(firstValue), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(firstNonce), utils.toHex(secondSig.v), utils.toHex(secondSig.r), utils.toHex(secondSig.s))
+            )
+        })
+
+        it('cannot use before valid period', async () => {
+            const value = tokenAmount(100)
+            const nonce = keccak256('nonce')
+
+            // Use a future period
+            const validAfter = bn(Math.floor(Date.now() / 1000) + 60)
+            const validBefore = MAX_UINT256
+
+            const { r, s, v } = await createTransferWithAuthorizationSignature(from, to, value, validAfter, validBefore, nonce)
+            await assertRevert(
+                token.transferWithAuthorization(from, to, utils.toHex(value), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(nonce), utils.toHex(v), utils.toHex(r), utils.toHex(s))
+            )
+        })
+
+        it('cannot use after valid period', async () => {
+            const value = tokenAmount(100)
+            const nonce = keccak256('nonce')
+
+            // Use a prior period
+            const validBefore = bn(Math.floor(Date.now() / 1000) - 60)
+            const validAfter = 0
+
+            const { r, s, v } = await createTransferWithAuthorizationSignature(from, to, value, validAfter, validBefore, nonce)
+            await assertRevert(
+                token.transferWithAuthorization(from, to, utils.toHex(value), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(nonce), utils.toHex(v), utils.toHex(r), utils.toHex(s))
+            )
+        })
+
+        it('cannot use expired nonce', async () => {
+            const nonce = keccak256('nonce')
+            const validAfter = 0
+            const validBefore = MAX_UINT256
+
+            const firstValue = tokenAmount(25)
+            const secondValue = tokenAmount(10)
+            const firstSig = await createTransferWithAuthorizationSignature(from, to, firstValue, validAfter, validBefore, nonce)
+            const secondSig = await createTransferWithAuthorizationSignature(from, to, secondValue, validAfter, validBefore, nonce)
+
+            // Using one should disallow the other
+            await token.transferWithAuthorization(from, to, utils.toHex(firstValue), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(nonce), utils.toHex(firstSig.v), utils.toHex(firstSig.r), utils.toHex(firstSig.s))
+            await assertRevert(
+                token.transferWithAuthorization(from, to, utils.toHex(secondValue), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(nonce), utils.toHex(secondSig.v), utils.toHex(secondSig.r), utils.toHex(secondSig.s)))
         })
     })
 })
