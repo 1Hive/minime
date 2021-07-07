@@ -572,7 +572,8 @@ contract MiniMeToken is Controlled, IArbToken {
     }
 
     function bridgeBurn(address _from, uint256 _amount) external onlyBridge {
-        require(transferFrom(_from, address(this), _amount));
+        require(transfersEnabled);
+        require(doTransfer(_from, address(this), _amount));
     }
 
 ////////////////
