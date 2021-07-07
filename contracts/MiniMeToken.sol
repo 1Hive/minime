@@ -23,6 +23,7 @@ pragma solidity ^0.4.24;
 /// @dev It is ERC20 compliant, but still needs to under go further testing.
 
 import "./ITokenController.sol";
+import "./IArbToken.sol";
 
 contract Controlled {
     /// @notice The address of the controller is the only address that can call
@@ -55,14 +56,15 @@ contract ApproveAndCallFallBack {
 /// @dev The actual token contract, the default controller is the msg.sender
 ///  that deploys the contract, so usually this token will be deployed by a
 ///  token controller contract, which Giveth will call a "Campaign"
-contract MiniMeToken is Controlled {
+contract MiniMeToken is Controlled, IArbToken {
 
     string public name;                //The Token's name: e.g. DigixDAO Tokens
     uint8 public decimals;             //Number of decimals of the smallest unit
     string public symbol;              //An identifier: e.g. REP
     string public version = "MMT_0.1"; //An arbitrary versioning scheme
 
-    bytes32 public nameHash;           //Name Hash to generate the domain separator  
+    bytes32 public nameHash;           //Name Hash to generate the domain separator
+    address public bridge;
 
     mapping(address => uint256) public nonces;                              // Track the nonces used by the permit function
     mapping(address => mapping(bytes32 => bool)) public authorizationState; // Help to track the states of transferWithAutorization
@@ -70,7 +72,7 @@ contract MiniMeToken is Controlled {
     // The chainId is hardcoded since solidity ^0.4.24 does not support `chainid` so we cannot get it dynamically
     // xDAI = 0x64 (100)
     uint256 public constant CHAINID = 0x64;
-    // bytes32 public view PERMIT_TYPEHASH = 
+    // bytes32 public view PERMIT_TYPEHASH =
     //      keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
     bytes32 public constant PERMIT_TYPEHASH = 0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
     // bytes32 public view TRANSFER_WITH_AUTHORIZATION_TYPEHASH =
@@ -141,6 +143,7 @@ contract MiniMeToken is Controlled {
     /// @param _decimalUnits Number of decimals of the new token
     /// @param _tokenSymbol Token Symbol for the new token
     /// @param _transfersEnabled If true, tokens will be able to be transferred
+    /// @param _l1Address The layer1 token address that this layer2 token represents
     function MiniMeToken(
         MiniMeTokenFactory _tokenFactory,
         MiniMeToken _parentToken,
@@ -148,7 +151,8 @@ contract MiniMeToken is Controlled {
         string _tokenName,
         uint8 _decimalUnits,
         string _tokenSymbol,
-        bool _transfersEnabled
+        bool _transfersEnabled,
+        address _l1Address
     )  public
     {
         tokenFactory = _tokenFactory;
@@ -158,6 +162,7 @@ contract MiniMeToken is Controlled {
         parentToken = _parentToken;
         parentSnapShotBlock = _parentSnapShotBlock;
         transfersEnabled = _transfersEnabled;
+        l1Address = _l1Address;
         creationBlock = block.number;
         nameHash = keccak256(_tokenName);
     }
@@ -488,7 +493,8 @@ contract MiniMeToken is Controlled {
             _cloneTokenName,
             _cloneDecimalUnits,
             _cloneTokenSymbol,
-            _transfersEnabled
+            _transfersEnabled,
+            l1Address
         );
 
         cloneToken.changeController(msg.sender);
@@ -542,6 +548,31 @@ contract MiniMeToken is Controlled {
     /// @param _transfersEnabled True if transfers are allowed in the clone
     function enableTransfers(bool _transfersEnabled) onlyController public {
         transfersEnabled = _transfersEnabled;
+    }
+
+
+////////////////
+// Arbitrum bridge functions
+////////////////
+
+    modifier onlyBridge {
+        require(msg.sender == bridge);
+        _;
+    }
+
+    /// @notice Changes the bridge with ability to assign and lock tokens
+    /// @param _bridge The new controller of the contract
+    function changeBridge(address _bridge) onlyController  public {
+        bridge = _bridge;
+    }
+
+    function bridgeMint(address _to, uint256 _amount) external onlyBridge {
+        require(transfersEnabled);
+        require(doTransfer(address(this), _to, _amount));
+    }
+
+    function bridgeBurn(address _from, uint256 _amount) external onlyBridge {
+        require(transferFrom(_from, address(this), _amount));
     }
 
 ////////////////
@@ -636,6 +667,10 @@ contract MiniMeToken is Controlled {
             return;
         }
 
+        if (_token == address(this)) {
+            return;
+        }
+
         MiniMeToken token = MiniMeToken(_token);
         uint balance = token.balanceOf(this);
         token.transfer(controller, balance);
@@ -684,7 +719,8 @@ contract MiniMeTokenFactory {
         string _tokenName,
         uint8 _decimalUnits,
         string _tokenSymbol,
-        bool _transfersEnabled
+        bool _transfersEnabled,
+        address _l1Address
     ) public returns (MiniMeToken)
     {
         MiniMeToken newToken = new MiniMeToken(
@@ -694,7 +730,8 @@ contract MiniMeTokenFactory {
             _tokenName,
             _decimalUnits,
             _tokenSymbol,
-            _transfersEnabled
+            _transfersEnabled,
+            _l1Address
         );
 
         newToken.changeController(msg.sender);
