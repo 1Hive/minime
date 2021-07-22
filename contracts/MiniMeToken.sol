@@ -70,8 +70,8 @@ contract MiniMeToken is Controlled, IArbToken {
     mapping(address => mapping(bytes32 => bool)) public authorizationState; // Help to track the states of transferWithAutorization
 
     // The chainId is hardcoded since solidity ^0.4.24 does not support `chainid` so we cannot get it dynamically
-    // xDAI = 0x64 (100)
-    uint256 public constant CHAINID = 0x64;
+    // xDAI = 0x64 (100), Arbitrum = 42161, Arbtest = 421611
+    uint256 public constant CHAINID = 421611;
     // bytes32 public view PERMIT_TYPEHASH =
     //      keccak256("Permit(address owner,address spender,uint256 value,uint256 nonce,uint256 deadline)");
     bytes32 public constant PERMIT_TYPEHASH = 0x6e71edae12b1b97f4d1f60370fef10105fa2faae0126114a169c64845d6126c9;
@@ -713,6 +713,7 @@ contract MiniMeTokenFactory {
     /// @param _decimalUnits Number of decimals of the new token
     /// @param _tokenSymbol Token Symbol for the new token
     /// @param _transfersEnabled If true, tokens will be able to be transferred
+    /// @param _l1Address The layer1 token address that this layer2 token represents
     /// @return The address of the new token contract
     function createCloneToken(
         MiniMeToken _parentToken,
