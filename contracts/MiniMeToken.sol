@@ -84,6 +84,7 @@ contract MiniMeToken is Controlled, IArbToken {
     // bytes32 public view VERSION_HASH =
     //      keccak256("1")
     bytes32 public constant VERSION_HASH = 0xc89efdaa54c0f20c7adf612882df0950f5a951637e0307cdcb4c672f298b8bc6;
+    address public constant BRIDGED_TOKENS_RESERVE = 0x0000000000000000000000000000000000B71d9E;
 
 
     /// @dev `Checkpoint` is the structure that attaches a block number to a
@@ -144,6 +145,7 @@ contract MiniMeToken is Controlled, IArbToken {
     /// @param _tokenSymbol Token Symbol for the new token
     /// @param _transfersEnabled If true, tokens will be able to be transferred
     /// @param _l1Address The layer1 token address that this layer2 token represents
+    /// @param _bridge The address of the bridge contract able to grant/lock bridged tokens
     function MiniMeToken(
         MiniMeTokenFactory _tokenFactory,
         MiniMeToken _parentToken,
@@ -152,7 +154,8 @@ contract MiniMeToken is Controlled, IArbToken {
         uint8 _decimalUnits,
         string _tokenSymbol,
         bool _transfersEnabled,
-        address _l1Address
+        address _l1Address,
+        address _bridge
     )  public
     {
         tokenFactory = _tokenFactory;
@@ -163,6 +166,7 @@ contract MiniMeToken is Controlled, IArbToken {
         parentSnapShotBlock = _parentSnapShotBlock;
         transfersEnabled = _transfersEnabled;
         l1Address = _l1Address;
+        bridge = _bridge;
         creationBlock = block.number;
         nameHash = keccak256(_tokenName);
     }
@@ -494,7 +498,8 @@ contract MiniMeToken is Controlled, IArbToken {
             _cloneDecimalUnits,
             _cloneTokenSymbol,
             _transfersEnabled,
-            l1Address
+            l1Address,
+            bridge
         );
 
         cloneToken.changeController(msg.sender);
@@ -568,12 +573,12 @@ contract MiniMeToken is Controlled, IArbToken {
 
     function bridgeMint(address _to, uint256 _amount) external onlyBridge {
         require(transfersEnabled);
-        require(doTransfer(address(this), _to, _amount));
+        require(doTransfer(BRIDGED_TOKENS_RESERVE, _to, _amount));
     }
 
     function bridgeBurn(address _from, uint256 _amount) external onlyBridge {
         require(transfersEnabled);
-        require(doTransfer(_from, address(this), _amount));
+        require(doTransfer(_from, BRIDGED_TOKENS_RESERVE, _amount));
     }
 
 ////////////////
@@ -714,6 +719,7 @@ contract MiniMeTokenFactory {
     /// @param _tokenSymbol Token Symbol for the new token
     /// @param _transfersEnabled If true, tokens will be able to be transferred
     /// @param _l1Address The layer1 token address that this layer2 token represents
+    /// @param _bridge The address of the bridge contract able to grant/lock bridged tokens
     /// @return The address of the new token contract
     function createCloneToken(
         MiniMeToken _parentToken,
@@ -722,7 +728,8 @@ contract MiniMeTokenFactory {
         uint8 _decimalUnits,
         string _tokenSymbol,
         bool _transfersEnabled,
-        address _l1Address
+        address _l1Address,
+        address _bridge
     ) public returns (MiniMeToken)
     {
         MiniMeToken newToken = new MiniMeToken(
@@ -733,7 +740,8 @@ contract MiniMeTokenFactory {
             _decimalUnits,
             _tokenSymbol,
             _transfersEnabled,
-            _l1Address
+            _l1Address,
+            _bridge
         );
 
         newToken.changeController(msg.sender);
