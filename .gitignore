@@ -5,9 +5,15 @@ node_modules/
 package-lock.json
 
 # Production
-build/
-abi/
+artifacts
+cache
+
+# Coverage
+coverage
+coverage.json
 
 # Logs
 yarn-debug.log*
 yarn-error.log*
+
+.env
