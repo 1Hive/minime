@@ -1,16 +1,23 @@
-const getBlockNumber = require('@aragon/test-helpers/blockNumber')(web3)
-const { assertRevert } = require('@aragon/test-helpers/assertThrow')
-const MiniMeToken = artifacts.require('MiniMeToken')
-const MiniMeTokenFactory = artifacts.require('MiniMeTokenFactory')
+const { ethers } = require('hardhat')
+const {
+  bn,
+  MAX_UINT256,
+  ZERO_ADDRESS,
+} = require("@1hive/contract-helpers-test");
+const { assertBn, assertEvent, assertRevert } = require('@1hive/contract-helpers-test/src/asserts')
+const web3Accounts = require("web3-eth-accounts");
+const { ecsign, ecrecover } = require("ethereumjs-util");
+const utils = require("web3-utils");
+const { keccak256 } = require("web3-utils");
+
 const { createPermitDigest, PERMIT_TYPEHASH } = require('./helpers/erc2612')
 const { tokenAmount } = require('./helpers/tokens')
-const web3Accounts = require('web3-eth-accounts');
-const { ecsign, ecrecover } = require('ethereumjs-util')
-const utils = require('web3-utils');
-const { assertBn, assertEvent } = require('@aragon/contract-helpers-test/src/asserts')
 const { createTransferWithAuthorizationDigest, TRANSFER_WITH_AUTHORIZATION_TYPEHASH } = require('./helpers/erc3009')
-const { keccak256 } = require('web3-utils')
-const { bn, MAX_UINT256, ZERO_ADDRESS } = require('@aragon/contract-helpers-test')
+
+const MiniMeToken = artifacts.require("MiniMeToken");
+const MiniMeTokenFactory = artifacts.require("MiniMeTokenFactory");
+
+const getBlockNumber = async () => ethers.provider.getBlockNumber()
 
 contract('MiniMeToken', accounts => {
     let factory = {}
