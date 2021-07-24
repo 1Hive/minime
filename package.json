@@ -5,17 +5,18 @@
   "author": "Jordi Baylina",
   "license": "GPL-3.0-or-later",
   "files": [
-    "/artifacts",
+    "/artifacts/contracts/**/*.json",
+    "!/artifacts/contracts/**/*.dbg.json",
     "/contracts",
     "/test"
   ],
   "scripts": {
-    "compile": "hardhat compile --force",
+    "compile": "hardhat compile",
     "chain": "hardhat node",
     "test": "hardhat test",
     "coverage": "hardhat coverage",
     "test:gas": "REPORT_GAS=true hardhat test",
-    "prepublishOnly": "yarn compile"
+    "prepublishOnly": "yarn compile -- --force"
   },
   "devDependencies": {
     "@1hive/contract-helpers-test": "^0.1.2",
