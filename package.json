@@ -14,7 +14,7 @@
     "chain": "hardhat node",
     "test": "hardhat test",
     "coverage": "hardhat coverage",
-    "test:gas": "REPORT_GAS=true hardhat test --network localhost",
+    "test:gas": "REPORT_GAS=true hardhat test",
     "prepublishOnly": "yarn compile"
   },
   "devDependencies": {
