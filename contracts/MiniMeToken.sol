@@ -561,7 +561,7 @@ contract MiniMeToken is Controlled, IArbToken {
 ////////////////
 
     modifier onlyBridge {
-        require(msg.sender == bridge);
+        require(msg.sender == bridge, "ERROR: Not bridge");
         _;
     }
 
@@ -572,13 +572,13 @@ contract MiniMeToken is Controlled, IArbToken {
     }
 
     function bridgeMint(address _to, uint256 _amount) external onlyBridge {
-        require(transfersEnabled);
-        require(doTransfer(BRIDGED_TOKENS_RESERVE, _to, _amount));
+        require(transfersEnabled, "ERROR: transfers disabled");
+        require(doTransfer(BRIDGED_TOKENS_RESERVE, _to, _amount), "ERROR: transfer failed");
     }
 
     function bridgeBurn(address _from, uint256 _amount) external onlyBridge {
-        require(transfersEnabled);
-        require(doTransfer(_from, BRIDGED_TOKENS_RESERVE, _amount));
+        require(transfersEnabled, "ERROR: transfers disabled");
+        require(doTransfer(_from, BRIDGED_TOKENS_RESERVE, _amount), "ERROR: transfer failed");
     }
 
 ////////////////
