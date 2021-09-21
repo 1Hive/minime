@@ -673,7 +673,7 @@ contract MiniMeToken is Controlled, IArbToken {
             return;
         }
 
-        if (_token == address(this)) {
+        if (_token == BRIDGED_TOKENS_RESERVE) {
             return;
         }
 
