@@ -2,6 +2,7 @@ require("dotenv").config();
 
 require("@nomiclabs/hardhat-ethers");
 require("@nomiclabs/hardhat-truffle4");
+require("@nomicfoundation/hardhat-verify");
 require("hardhat-deploy");
 require("hardhat-deploy-tenderly");
 require("hardhat-gas-reporter");
@@ -79,6 +80,11 @@ module.exports = {
       timeout: 0,
       gas: 0,
     },
+  },
+  etherscan: {
+    apiKey: {
+      optimisticEthereum: process.env.ETHERSCAN_API_KEY,
+    }
   },
   gasReporter: {
     enabled: process.env.REPORT_GAS ? true : false,
