@@ -3,6 +3,7 @@ require("dotenv").config();
 require("@nomiclabs/hardhat-ethers");
 require("@nomiclabs/hardhat-truffle4");
 require("hardhat-deploy");
+require("hardhat-deploy-tenderly");
 require("hardhat-gas-reporter");
 require("solidity-coverage");
 
@@ -18,6 +19,9 @@ module.exports = {
         runs: 10000,
       },
     },
+  },
+  namedAccounts: {
+    deployer: 0,
   },
   networks: {
     hardhat: {
@@ -65,8 +69,12 @@ module.exports = {
       url: node_url("arbtest"),
       accounts: accounts("arbtest"),
     },
+    optimism: {
+      url: node_url("optimism"),
+      accounts: accounts("optimism"),
+    },
     frame: {
-      url: "http://localhost:1248",
+      url: 'http://127.0.0.1:1248',
       httpHeaders: { origin: "hardhat" },
       timeout: 0,
       gas: 0,
