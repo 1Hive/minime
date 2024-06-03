@@ -23,17 +23,21 @@ contract('MiniMeToken', accounts => {
     let factory = {}
     let token = {}
     let clone1 = {}
+    const l1TokenAddress = accounts[6]
+    const bridgeAddress = accounts[7]
 
     it('should deploy contracts', async () => {
         factory = await MiniMeTokenFactory.new()
         token = await MiniMeToken.new(
-            factory.address,
-            0,
-            0,
-            'MiniMe Test Token',
-            18,
-            'MMT',
-            true)
+          factory.address,
+          0,
+          0,
+          'MiniMe Test Token',
+          18,
+          'MMT',
+          true,
+          l1TokenAddress,
+          bridgeAddress)
 
         assert.ok(token)
     })
@@ -277,6 +281,7 @@ contract('MiniMeToken', accounts => {
             await assertRevert(token.permit(_owner, _spender, utils.toHex(firstValue), utils.toHex(deadline), utils.toHex(firstSig.v), utils.toHex(firstSig.r), utils.toHex(firstSig.s)), '_validateSignedData: INVALID_SIGNATURE')
         })
     })
+
     context('ERC-3009', () => {
 
         let from, fromPrivKey
@@ -457,6 +462,98 @@ contract('MiniMeToken', accounts => {
             await token.transferWithAuthorization(from, to, utils.toHex(firstValue), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(nonce), utils.toHex(firstSig.v), utils.toHex(firstSig.r), utils.toHex(firstSig.s))
             await assertRevert(
                 token.transferWithAuthorization(from, to, utils.toHex(secondValue), utils.toHex(validAfter), utils.toHex(validBefore), utils.toHex(nonce), utils.toHex(secondSig.v), utils.toHex(secondSig.r), utils.toHex(secondSig.s)))
+        })
+    })
+
+    context('bridge minting', () => {
+        beforeEach(async () => {
+            factory = await MiniMeTokenFactory.new()
+            token = await MiniMeToken.new(
+              factory.address,
+              0,
+              0,
+              'MiniMe Test Token',
+              18,
+              'MMT',
+              true,
+              l1TokenAddress,
+              bridgeAddress)
+        })
+
+        context('changeBridge(address _bridge)', () => {
+            it('can change bridge address', async () => {
+                const newBridgeAddress = accounts[8]
+                assert.equal(await token.bridge(), bridgeAddress, "Incorrect current bridge address")
+                await token.changeBridge(newBridgeAddress)
+                assert.equal(await token.bridge(), newBridgeAddress, "Incorrect new bridge address")
+            })
+
+            it('reverts when not controller', async () => {
+                await assertRevert(token.changeBridge(accounts[1], {from: accounts[1]}))
+            })
+        })
+
+        context('bridgeMint(address _to, uint256 _amount)', () => {
+            it('tranafers from reserve to address', async () => {
+                const receiver = accounts[1]
+                const sendAmount = 100
+                const reserveAddress = await token.BRIDGED_TOKENS_RESERVE()
+                await token.generateTokens(reserveAddress, sendAmount)
+                assert.equal(await token.balanceOf(receiver), 0, "Incorrect initial balance")
+
+                await token.bridgeMint(receiver, sendAmount, { from: bridgeAddress })
+
+                assert.equal(await token.balanceOf(receiver), sendAmount, "Incorrect final balance")
+                assert.equal(await token.balanceOf(reserveAddress), 0, "Incorrect reserve balance")
+            })
+
+            it('reverts when not called from bridge', async () => {
+                await assertRevert(token.bridgeMint(accounts[1], 100), "ERROR: Not bridge")
+            })
+
+            it('reverts when no tokens to transfer', async () => {
+                await assertRevert(token.bridgeMint(accounts[1], 100, { from: bridgeAddress }), "ERROR: transfer failed")
+            })
+
+            it('reverts when transfers are disabled', async () => {
+                const sendAmount = 100
+                await token.generateTokens(await token.BRIDGED_TOKENS_RESERVE(), sendAmount)
+                await token.enableTransfers(false)
+
+                await assertRevert(token.bridgeMint(accounts[1], sendAmount, { from: bridgeAddress }), "ERROR: transfers disabled")
+            })
+        })
+
+        context('bridgeBurn(address _from, uint256 _amount)', () => {
+            it('transfers to reserve address', async () => {
+                const burner = accounts[1]
+                const burnAmount = 100
+                const reserveAddress = await token.BRIDGED_TOKENS_RESERVE()
+                await token.generateTokens(burner, burnAmount)
+                assert.equal(await token.balanceOf(burner), burnAmount, "Incorrect initial balance")
+
+                await token.bridgeBurn(burner, burnAmount, { from: bridgeAddress })
+
+                assert.equal(await token.balanceOf(burner), 0, "Incorrect final balance")
+                assert.equal(await token.balanceOf(reserveAddress), burnAmount, "Incorrect reserve balance")
+            })
+
+            it('reverts when not called from bridge', async () => {
+                await assertRevert(token.bridgeBurn(accounts[1], 100), "ERROR: Not bridge")
+            })
+
+            it('reverts when no tokens to transfer', async () => {
+                await assertRevert(token.bridgeBurn(accounts[1], 100, { from: bridgeAddress }), "ERROR: transfer failed")
+            })
+
+            it('reverts when transfers are disabled', async () => {
+                const burner = accounts[1]
+                const burnAmount = 100
+                await token.generateTokens(burner, burnAmount)
+                await token.enableTransfers(false)
+
+                await assertRevert(token.bridgeBurn(burner, burnAmount, { from: bridgeAddress }), "ERROR: transfers disabled")
+            })
         })
     })
 })
